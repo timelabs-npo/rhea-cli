@@ -37,7 +37,7 @@ from rhea_cli import __version__
 # Config
 # ---------------------------------------------------------------------------
 ORG = "timelabs-npo"
-REPOS = ["rhea-project", "rhea-memory", "rhea-play", "rhea-ios", "rhea-tutorials", ".github"]
+REPOS = ["rhea-project", "rhea-memory", "rhea-play", "rhea-ios", "rhea-keyboard", "rhea-atlas", "rhea-tutorials", ".github"]
 FLY_APP = "rhea-tribunal"
 API_LOCAL = os.environ.get("RHEA_API", "http://localhost:8400")
 API_CLOUD = f"https://{FLY_APP}.fly.dev"
@@ -726,6 +726,258 @@ def emergency_kill(pattern):
     console.print(f"[yellow]Matching processes:[/yellow]\n{result.stdout}")
     subprocess.run(["pkill", "-f", pattern])
     console.print(f"[red]Killed processes matching '{pattern}'[/red]")
+
+
+# ===========================================================================
+# COWORK -- Agent coordination mode (reassembled co-work)
+# ===========================================================================
+@cli.group()
+@click.pass_context
+def cowork(ctx):
+    """Co-work: interactive agent coordination from CLI."""
+    pass
+
+
+@cowork.command("session")
+@click.option("--name", default=None, help="Session name")
+@click.pass_context
+def cowork_session(ctx, name):
+    """Start a co-work session — multiplexed agent dashboard + command input."""
+    import threading
+    import uuid
+
+    base = ctx.obj.get("api_base", API_LOCAL)
+    session_id = name or f"cw-{uuid.uuid4().hex[:6]}"
+    console.print(f"[cyan]Co-work session: {session_id}[/cyan]")
+    console.print(f"[dim]API: {base}  |  Ctrl+C to exit[/dim]\n")
+
+    stop_event = threading.Event()
+
+    def _build_cowork_layout():
+        layout = Layout()
+        layout.split_column(
+            Layout(name="header", size=3),
+            Layout(name="body"),
+            Layout(name="input", size=3),
+        )
+        layout["body"].split_row(
+            Layout(name="left", ratio=1),
+            Layout(name="right", ratio=2),
+        )
+        layout["left"].split_column(
+            Layout(name="agents"),
+            Layout(name="tasks"),
+        )
+        layout["right"].split_column(
+            Layout(name="radio"),
+            Layout(name="office"),
+        )
+
+        now = datetime.now().strftime("%H:%M:%S")
+        layout["header"].update(Panel(
+            f"[bold cyan]RHEA CO-WORK[/bold cyan]  |  {session_id}  |  {base}  |  {now}",
+            style="cyan",
+        ))
+
+        # Agents pane
+        agents_data = _api("/agents/status", base=base)
+        if isinstance(agents_data, dict) and "agents" in agents_data:
+            t = Table(show_header=True, expand=True, padding=(0, 1))
+            t.add_column("Agent", style="cyan", min_width=6)
+            t.add_column("●", min_width=1)
+            t.add_column("T", justify="right", min_width=4)
+            t.add_column("$", justify="right", min_width=5)
+            agents_dict = agents_data["agents"]
+            if isinstance(agents_dict, dict):
+                for name_key, info in sorted(agents_dict.items()):
+                    alive = info.get("alive", False)
+                    dot = "[green]●[/green]" if alive else "[red]●[/red]"
+                    tok = info.get("T_day", 0)
+                    tok_s = f"{tok // 1000}K" if tok >= 1000 else str(tok)
+                    cost = info.get("dollar_day", 0)
+                    t.add_row(name_key[:6], dot, tok_s, f"{cost:.2f}")
+            layout["agents"].update(Panel(t, title="[cyan]AGENTS[/cyan]", border_style="cyan"))
+        else:
+            layout["agents"].update(Panel("[dim]offline[/dim]", title="AGENTS"))
+
+        # Tasks pane
+        tasks_data = _api("/tasks", base=base)
+        if isinstance(tasks_data, dict) and "tasks" in tasks_data:
+            task_list = tasks_data["tasks"]
+            summary = {}
+            for task in task_list:
+                s = task.get("status", "?")
+                summary[s] = summary.get(s, 0) + 1
+            parts = [f"[green]{summary.get('done', 0)} done[/green]",
+                     f"[yellow]{summary.get('claimed', 0)} active[/yellow]",
+                     f"[white]{summary.get('open', 0)} open[/white]",
+                     f"[red]{summary.get('blocked', 0)} blocked[/red]"]
+            task_text = Text()
+            for task in task_list[:6]:
+                status = task.get("status", "?")
+                sc = {"done": "green", "claimed": "yellow", "open": "white", "blocked": "red"}.get(status, "dim")
+                task_text.append(f"[{sc}]●[/{sc}] ", style=sc)
+                title = (task.get("title", "?") or "")[:30]
+                task_text.append(f"{title}\n")
+            layout["tasks"].update(Panel(
+                Text.from_markup("  ".join(parts)) if parts else task_text,
+                title="[yellow]TASKS[/yellow]", border_style="yellow"))
+        else:
+            layout["tasks"].update(Panel("[dim]no data[/dim]", title="TASKS"))
+
+        # Radio pane
+        radio_data = _api("/feed?limit=12", base=base)
+        radio_text = Text()
+        if isinstance(radio_data, dict) and "items" in radio_data:
+            for msg in radio_data["items"][:12]:
+                ts = (msg.get("ts", "") or "")[-8:-3]
+                sender = (msg.get("sender", "?") or "")[:6]
+                text = ((msg.get("text", "") or "").replace("\n", " "))[:60]
+                radio_text.append(f"{ts} ", style="dim")
+                radio_text.append(f"{sender:>6s} ", style="cyan")
+                radio_text.append(f"{text}\n")
+        elif isinstance(radio_data, dict) and "radio" in radio_data:
+            for msg in radio_data["radio"][:12]:
+                ts = (msg.get("ts", "") or "")[-8:-3]
+                sender = (msg.get("sender", "?") or "")[:6]
+                text = ((msg.get("text", "") or "").replace("\n", " "))[:60]
+                radio_text.append(f"{ts} ", style="dim")
+                radio_text.append(f"{sender:>6s} ", style="cyan")
+                radio_text.append(f"{text}\n")
+        layout["radio"].update(Panel(radio_text or "[dim]waiting...[/dim]",
+                                     title="[green]RADIO[/green]", border_style="green"))
+
+        # Office pane
+        office_data = _api("/cc/office?limit=6", base=base)
+        office_text = Text()
+        if isinstance(office_data, dict) and "office" in office_data:
+            for msg in office_data["office"][:6]:
+                sender = (msg.get("sender", "?") or "")[:4]
+                receiver = (msg.get("receiver", "?") or "")[:4]
+                text = ((msg.get("text", "") or "").replace("\n", " "))[:50]
+                office_text.append(f"{sender}", style="cyan")
+                office_text.append("→", style="dim")
+                office_text.append(f"{receiver} ", style="yellow")
+                office_text.append(f"{text}\n")
+        layout["office"].update(Panel(office_text or "[dim]no messages[/dim]",
+                                      title="[magenta]OFFICE[/magenta]", border_style="magenta"))
+
+        layout["input"].update(Panel(
+            "[dim]Commands: t <claim> = tribunal  |  task <title> = create task  |  "
+            "wake <agent> = wake agent  |  q = quit[/dim]",
+            style="dim",
+        ))
+        return layout
+
+    try:
+        with Live(_build_cowork_layout(), console=console, refresh_per_second=0.3) as live:
+            while not stop_event.is_set():
+                time.sleep(3)
+                live.update(_build_cowork_layout())
+    except KeyboardInterrupt:
+        console.print(f"\n[dim]Session {session_id} ended.[/dim]")
+
+
+@cowork.command("dispatch")
+@click.argument("task_title")
+@click.option("--agent", default="", help="Assign to specific agent")
+@click.option("--priority", default="P1", help="Task priority (P0-P3)")
+@click.pass_context
+def cowork_dispatch(ctx, task_title, agent, priority):
+    """Dispatch a task to the queue (like spawning an agent task)."""
+    base = ctx.obj.get("api_base", API_LOCAL)
+    import urllib.parse
+    params = urllib.parse.urlencode({
+        "title": task_title,
+        "priority": priority,
+        **({"agent": agent} if agent else {}),
+    })
+    try:
+        r = requests.post(f"{base}/tasks?{params}", timeout=10)
+        if r.status_code < 300:
+            data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
+            task_id = data.get("id", "?")
+            console.print(f"[green]Task dispatched: {task_id}[/green]  {task_title}")
+        else:
+            console.print(f"[red]Failed: HTTP {r.status_code}[/red]")
+    except Exception as e:
+        console.print(f"[red]{e}[/red]")
+
+
+@cowork.command("wake")
+@click.argument("agent_name")
+@click.pass_context
+def cowork_wake(ctx, agent_name):
+    """Wake an agent via radio broadcast."""
+    base = ctx.obj.get("api_base", API_LOCAL)
+    result = _api("/feed/broadcast", method="POST", base=base, data={
+        "type": "wake",
+        "sender": "human",
+        "text": f"WAKE {agent_name.upper()} — requested via rhea cowork",
+    })
+    if isinstance(result, dict) and "error" not in result:
+        console.print(f"[green]Wake signal sent to {agent_name}[/green]")
+    else:
+        console.print(f"[red]{result}[/red]")
+
+
+@cowork.command("ask")
+@click.argument("claim")
+@click.option("--ice", is_flag=True, help="Use ICE (deep verification)")
+@click.pass_context
+def cowork_ask(ctx, claim, ice):
+    """Quick tribunal query from co-work context."""
+    base = ctx.obj.get("api_base", API_LOCAL)
+    endpoint = "/tribunal/ice" if ice else "/tribunal"
+    console.print(f"[yellow]→ {endpoint}[/yellow]")
+    result = _api(endpoint, method="POST", base=base,
+                  data={"prompt": claim, "k": 3, "tier": "cheap"}, timeout=120)
+    if isinstance(result, dict) and "error" not in result:
+        agreement = result.get("agreement_score", "?")
+        consensus = result.get("consensus", result.get("consensus_text", "?"))
+        color = "green" if isinstance(agreement, (int, float)) and agreement >= 0.6 else "red"
+        console.print(Panel(
+            f"[{color}]Agreement: {agreement}[/{color}]\n\n{consensus}",
+            title="Tribunal", border_style=color,
+        ))
+    else:
+        console.print(f"[red]{result}[/red]")
+
+
+# ===========================================================================
+# SWITCH -- Cloud/Localhost toggle
+# ===========================================================================
+@cli.command("local")
+@click.pass_context
+def switch_local(ctx):
+    """Switch API target to localhost:8400."""
+    os.environ["RHEA_API"] = "http://localhost:8400"
+    console.print("[green]● LOCAL[/green]  http://localhost:8400")
+    # Test connection
+    try:
+        r = requests.get("http://localhost:8400/health", timeout=3)
+        if r.status_code == 200:
+            console.print("[green]  connected[/green]")
+        else:
+            console.print(f"[yellow]  HTTP {r.status_code}[/yellow]")
+    except Exception:
+        console.print("[red]  unreachable[/red]")
+
+
+@cli.command("cloud")
+@click.pass_context
+def switch_cloud(ctx):
+    """Switch API target to rhea-tribunal.fly.dev."""
+    os.environ["RHEA_API"] = API_CLOUD
+    console.print(f"[cyan]● CLOUD[/cyan]  {API_CLOUD}")
+    try:
+        r = requests.get(f"{API_CLOUD}/health", timeout=5)
+        if r.status_code == 200:
+            console.print("[green]  connected[/green]")
+        else:
+            console.print(f"[yellow]  HTTP {r.status_code}[/yellow]")
+    except Exception:
+        console.print("[red]  unreachable[/red]")
 
 
 # ===========================================================================

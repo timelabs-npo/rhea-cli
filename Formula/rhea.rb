@@ -4,7 +4,7 @@ class Rhea < Formula
   desc "Unified CLI for Rhea agent coordination OS"
   homepage "https://github.com/timelabs-npo/rhea-cli"
   url "https://github.com/timelabs-npo/rhea-cli/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 ""
+  sha256 "3c04facbc42ae88d5749e3eab30fe28bdf325447db7e37f8e3123dc016369ef3"
   license "MIT"
 
   depends_on "python@3.11"

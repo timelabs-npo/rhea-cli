@@ -1,159 +1,75 @@
-# rhea-cli
+# Rhea CLI
 
-Unified CLI for the Rhea agent coordination OS. Controls four planes from one command:
+**Put the handle within reach.**
 
-1. **GitHub org** — repos, licenses, profiles, topics
-2. **Fly.io** — deploy, secrets, logs, status
-3. **Tribunal API** — agents, history, radio, office, tribunal
-4. **Co-work** — interactive agent coordination (session, dispatch, wake, ask)
+Rhea CLI is a Python command-line interface for Rhea service requests, agent coordination, GitHub organization work, and Fly.io operations. The installed command is `rhea`.
 
-## Install
+A system gets harder to control when every useful action lives behind a different window. This project brings the handles into one command tree: inspect the agents, read the queue, choose the service address, reach the tools that operate the infrastructure.
 
-### Homebrew (recommended)
+The ambition is simple: the person at the terminal should be able to see what a command will touch. A short command can still have a long reach.
 
-```bash
-brew tap timelabs-npo/tap
-brew install rhea
-```
+## Choose the handle
 
-### pip
+| Command family | What it addresses | What it needs |
+|---|---|---|
+| `api` | Health, Tribunal, agents, radio, history, office, governor | A compatible reachable Rhea API |
+| `cowork` | Live terminal session, task dispatch, agent wake messages, questions | Rhea coordination endpoints |
+| `monitor` | Periodically refreshed service dashboard | Rhea API |
+| `org` | Repositories, licenses, profile, topics | `gh` and GitHub authorization |
+| `fly` | Deployment, logs, secrets, SSH, memory sizing | `fly` and Fly.io authorization |
+| `check`, `commit` | Repository-specific check and publication helpers | Their scripts in the current checkout |
+| `emergency` | Agent/process control commands | The relevant local processes or service |
 
-```bash
-pip install rhea-cli
-```
+The current implementation uses [Click, Rich, and Requests](pyproject.toml). Its [command definitions](rhea_cli/cli.py) also contain the organization name, repository list, and Fly app name. This is a Rhea operations client, not a generic controller for any organization.
 
-### From source
+## Start with the command tree
 
-```bash
-git clone https://github.com/timelabs-npo/rhea-cli.git
-cd rhea-cli
-pip install -e .
-```
-
-## Usage
-
-### GitHub org management
+From this checkout, with Python 3.10+:
 
 ```bash
-rhea org status
-rhea org license --fix
-rhea org profile
-rhea org create my-repo --public --desc "My repo"
-rhea org topics my-repo ai agents python
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -e .
+rhea --help
+rhea api --help
+rhea cowork --help
 ```
 
-### Fly.io operations
+These help commands let you inspect the interface before sending a request. [The Homebrew tap](https://github.com/timelabs-npo/homebrew-tap) offers a separately pinned release; source installation follows this checkout.
+
+## An address is a decision
+
+The default API address is `http://localhost:8400`. Select the cloud for an invocation, or set the local/custom base explicitly:
 
 ```bash
-rhea fly status
-rhea fly deploy
-rhea fly logs -n 100
-rhea fly secrets
-rhea fly ssh
-rhea fly scale 1024
+rhea --cloud api agents
+RHEA_API=http://localhost:8400 rhea api agents
 ```
 
-### Tribunal API
+The cloud address is `https://rhea-tribunal.fly.dev`. These commands request service data; their success depends on connectivity and the service's access rules.
 
-```bash
-rhea api health
-rhea api tribunal "The Earth is round"
-rhea api tribunal "Water boils at 100C" --ice
-rhea api agents
-rhea api radio
-rhea api history
-rhea api office
-rhea api governor
-```
+Two details are easy to miss:
 
-### Co-work — agent coordination mode
+- **`rhea local` and `rhea cloud` do not change the target of your next command, even in the same shell.** They probe an address and modify only their own process environment. Use `--cloud` on an invocation or set `RHEA_API` in your shell to choose a lasting target.
+- **`rhea api health` probes both local and cloud addresses.** It does so even when `--cloud` is supplied.
 
-```bash
-# Start a live multiplexed dashboard (agents + tasks + radio + office)
-rhea cowork session
-rhea cowork session --name mywork
+The command tree tells you what operation exists. Target selection tells you where its request goes. Permission decides what can happen when it arrives. Keeping those three visible is the beginning of control.
 
-# Dispatch a task to the queue
-rhea cowork dispatch "Refactor auth module" --priority P0
-rhea cowork dispatch "Write tests" --agent rex --priority P1
+## Commands with consequences
 
-# Wake an agent via radio broadcast
-rhea cowork wake rex
-rhea cowork wake hyperion
+Use each group's `--help` to inspect arguments before operating it. `cowork dispatch` creates a task; `cowork wake` sends a message; Tribunal questions can invoke models. `org`, `fly`, and `emergency` also contain commands that change repositories, services, or processes.
 
-# Quick tribunal query
-rhea cowork ask "Is the deployment stable?"
-rhea cowork ask "Check memory usage" --ice
-```
+`rhea check` expects `scripts/rhea/check.sh` in the current repository. `rhea commit` expects `scripts/rhea_commit.sh`, then attempts `git push` **even if that helper fails**. Neither helper is shipped in this standalone CLI repository. These are wrappers around a particular checkout's workflow, not built-in validation or approval gates.
 
-### Cloud / localhost switcher
+See [the implementation](rhea_cli/cli.py) for exact behavior. Model agreement and a successful command exit deserve different questions; neither alone establishes that the desired real-world result occurred.
 
-```bash
-# Point CLI at local API (http://localhost:8400) and test connection
-rhea local
+## The surrounding system
 
-# Point CLI at cloud (rhea-tribunal.fly.dev) and test connection
-rhea cloud
+Start at [the Rhea family entrance](https://blueshoes.space/rhea/).
 
-# One-shot: use --cloud flag for any command
-rhea --cloud api health
-rhea --cloud cowork session
-rhea --cloud api tribunal "claim here"
-```
+- [Rhea / Tribunal](https://github.com/timelabs-npo/rhea-project) contains coordination and backend work.
+- [Rhea Atlas](https://github.com/timelabs-npo/rhea-atlas) gives service state a browser interface.
+- [Rhea Memory](https://github.com/timelabs-npo/rhea-memory) provides local facts, timelines, and context feeds.
+- [Homebrew tap](https://github.com/timelabs-npo/homebrew-tap) defines what `brew install timelabs-npo/tap/rhea` installs.
 
-### Live dashboard
-
-```bash
-rhea monitor --interval 3
-```
-
-### Repo invariant checks
-
-```bash
-rhea check
-```
-
-### Quick commit + push
-
-```bash
-rhea commit "feat: add new endpoint"
-```
-
-### Emergency controls
-
-```bash
-rhea emergency stop
-rhea emergency pause
-rhea emergency resume
-rhea emergency kill python
-```
-
-## Configuration
-
-- `RHEA_API` env var: override local API base URL (default: `http://localhost:8400`)
-- `--cloud` flag: target `rhea-tribunal.fly.dev` instead of localhost
-- `rhea local` / `rhea cloud`: test connection and switch targets interactively
-
-## Command Reference
-
-```
-rhea cli
-├── org         GitHub org management (repos, licenses, topics)
-├── fly         Fly.io deployment (deploy, secrets, logs, ssh, scale)
-├── api         Tribunal API (health, tribunal, history, radio, agents, office, governor)
-├── cowork      Agent coordination
-│   ├── session     Live multiplexed dashboard
-│   ├── dispatch    Push a task to the queue
-│   ├── wake        Broadcast a wake signal to an agent
-│   └── ask         Quick tribunal query
-├── monitor     Live terminal dashboard
-├── check       Repo invariant checks
-├── commit      Quick commit + push via rhea_commit.sh
-├── local       Switch API target to localhost:8400
-├── cloud       Switch API target to rhea-tribunal.fly.dev
-└── emergency   Emergency controls (stop, pause, resume, kill)
-```
-
-## License
-
-MIT — Copyright (c) 2026 timelabs npo
+MIT — see [LICENSE](LICENSE).
